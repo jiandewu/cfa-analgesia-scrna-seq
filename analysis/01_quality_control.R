@@ -1,30 +1,34 @@
+# Input and output directories can be overridden with environment variables.
+data_dir <- Sys.getenv("SCRNA_DATA_DIR", unset = "data")
+output_root <- Sys.getenv("SCRNA_RESULTS_DIR", unset = "results")
+dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
+
 library(SingleCellExperiment)
 library(Matrix)
 library(scales)
 library(cowplot)
 library(RCurl)
-setwd(".")
 
 # How to read in 10X data for a single sample (output is a sparse matrix)
 
 # Turn count matrix into a Seurat object (output is a Seurat object)
-# The min.features argument specifies the minimum number of genes 
-# that need to be detected per cell. This argument will filter out 
-# poor quality cells that likely just have random barcodes encapsulated 
-# without any cell present. Usually, cells with less than 100 genes detected 
+# The min.features argument specifies the minimum number of genes
+# that need to be detected per cell. This argument will filter out
+# poor quality cells that likely just have random barcodes encapsulated
+# without any cell present. Usually, cells with less than 100 genes detected
 # are not considered for analysis.
 library(Seurat)
 for (file in c("CFA_3DDA_F1", "CFA_APAP_D1", "CFA_Veh_B1", "Saline_3DDA_E1", "Saline_APAP_C1", "Saline_Veh_A1")){
-  seurat_data <- Read10X(data.dir = paste0(file, "/outs/filtered_feature_bc_matrix/"))
-  seurat_obj <- CreateSeuratObject(counts = seurat_data$`Gene Expression`, 
-                                   min.features = 100, 
+  seurat_data <- Read10X(data.dir = file.path(data_dir, file, "outs", "filtered_feature_bc_matrix"))
+  seurat_obj <- CreateSeuratObject(counts = seurat_data$`Gene Expression`,
+                                   min.features = 100,
                                    project = file)
   assign(file, seurat_obj)
 }
 
 # Explore the metadata
 # What do the columns of metadata mean?
-#   
+#
 # orig.ident: this often contains the sample identity if known, but will default to "SeuratProject"
 # nCount_RNA: number of UMIs per cell
 # nFeature_RNA: number of genes detected per cell
@@ -37,7 +41,7 @@ head(CFA_3DDA_F1@meta.data)
 head(Saline_3DDA_E1@meta.data)
 
 # Create a merged Seurat object
-merged_seurat <- merge(x = CFA_3DDA_F1, 
+merged_seurat <- merge(x = CFA_3DDA_F1,
                        y = list(CFA_APAP_D1,CFA_Veh_B1,Saline_3DDA_E1,Saline_APAP_C1,Saline_Veh_A1),
                        add.cell.id = c("CFA_3DDA_F1", "CFA_APAP_D1", "CFA_Veh_B1", "Saline_3DDA_E1", "Saline_APAP_C1", "Saline_Veh_A1"))
 # Check that the merged object has the appropriate sample-specific prefixes
@@ -71,26 +75,26 @@ metadata$sample[which(str_detect(metadata$cells, "^Saline_"))] <- "Saline"
 merged_seurat@meta.data <- metadata
 
 # Create .RData object to load at any time
-save(merged_seurat, file="merged_filtered_seurat.RData")
+save(merged_seurat, file=file.path(output_root, "merged_filtered_seurat.RData"))
 
 # Visualize the number of cell counts per sample
-# We see over 15,000 cells per sample, which is quite a bit more than the 12-13,000 expected. 
+# We see over 15,000 cells per sample, which is quite a bit more than the 12-13,000 expected.
 # It is clear that we likely have some junk 'cells' present.
-metadata %>% 
-  ggplot(aes(x=sample, fill=sample)) + 
+metadata %>%
+  ggplot(aes(x=sample, fill=sample)) +
   geom_bar() +
   theme_classic() +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
   theme(plot.title = element_text(hjust=0.5, face="bold")) +
   ggtitle("NCells")
 # Visualize the number UMIs/transcripts per cell
-# The UMI counts per cell should generally be above 500, that is the low end of what we expect. 
-# If UMI counts are between 500-1000 counts, 
+# The UMI counts per cell should generally be above 500, that is the low end of what we expect.
+# If UMI counts are between 500-1000 counts,
 # it is usable but the cells probably should have been sequenced more deeply.
-metadata %>% 
-  ggplot(aes(color=sample, x=nUMI, fill= sample)) + 
-  geom_density(alpha = 0.2) + 
-  scale_x_log10() + 
+metadata %>%
+  ggplot(aes(color=sample, x=nUMI, fill= sample)) +
+  geom_density(alpha = 0.2) +
+  scale_x_log10() +
   theme_classic() +
   ylab("Cell density") +
   geom_vline(xintercept = 500)
@@ -160,32 +164,32 @@ filtered_counts <- counts[keep_genes, ]
 filtered_seurat <- CreateSeuratObject(filtered_counts, meta.data = filtered_seurat@meta.data)
 
 # Create .RData object to load at any time
-save(filtered_seurat, file="seurat_filtered.RData")
+save(filtered_seurat, file=file.path(output_root, "seurat_filtered.RData"))
 export_matrix <- as.matrix(filtered_seurat@assays$RNA@data)
-write.table(as.matrix(GetAssayData(object = filtered_seurat, slot = "counts")), 
-            'counts.txt', 
+write.table(as.matrix(GetAssayData(object = filtered_seurat, slot = "counts")),
+            file.path(output_root, "counts.txt"),
             sep = '\t', row.names = T, col.names = T, quote = F)
 
 # Normalize the counts
 seurat_phase <- NormalizeData(filtered_seurat)
-write.table(as.matrix(GetAssayData(object = seurat_phase, slot = "counts")), 
-            'counts_normal.csv', 
+write.table(as.matrix(GetAssayData(object = seurat_phase, slot = "counts")),
+            file.path(output_root, "counts_normal.csv"),
             sep = ',', row.names = T, col.names = T, quote = F)
 # Load cell cycle markers
 load("data/cycle.rda")
 
 # Score cells for cell cycle
-seurat_phase <- CellCycleScoring(seurat_phase, 
-                                 g2m.features = g2m_genes, 
+seurat_phase <- CellCycleScoring(seurat_phase,
+                                 g2m.features = g2m_genes,
                                  s.features = s_genes)
 
-# View cell cycle scores and phases assigned to cells                                 
+# View cell cycle scores and phases assigned to cells
 View(seurat_phase@meta.data)
 
 # Identify the most variable genes
-seurat_phase <- FindVariableFeatures(seurat_phase, 
+seurat_phase <- FindVariableFeatures(seurat_phase,
                                      selection.method = "vst",
-                                     nfeatures = 2000, 
+                                     nfeatures = 2000,
                                      verbose = FALSE)
 
 # Scale the counts
@@ -218,57 +222,57 @@ for (i in 1:length(split_seurat)) {
 split_seurat$ctrl@assays
 
 # Select the most variable features to use for integration
-integ_features <- SelectIntegrationFeatures(object.list = split_seurat, 
-                                            nfeatures = 3000) 
+integ_features <- SelectIntegrationFeatures(object.list = split_seurat,
+                                            nfeatures = 3000)
 # Prepare the SCT list object for integration
-split_seurat <- PrepSCTIntegration(object.list = split_seurat, 
+split_seurat <- PrepSCTIntegration(object.list = split_seurat,
                                    anchor.features = integ_features)
 # Find best buddies - can take a while to run
-integ_anchors <- FindIntegrationAnchors(object.list = split_seurat, 
-                                        normalization.method = "SCT", 
+integ_anchors <- FindIntegrationAnchors(object.list = split_seurat,
+                                        normalization.method = "SCT",
                                         anchor.features = integ_features)
 # Integrate across conditions
-seurat_integrated <- IntegrateData(anchorset = integ_anchors, 
+seurat_integrated <- IntegrateData(anchorset = integ_anchors,
                                    normalization.method = "SCT")
 # Save integrated seurat object
-saveRDS(seurat_integrated, "results/integrated_seurat.rds")
+saveRDS(seurat_integrated, file.path(output_root, "integrated_seurat.rds"))
 # Run PCA
 seurat_integrated <- RunPCA(object = seurat_integrated)
 
 # Plot PCA
 PCAPlot(seurat_integrated,
-        split.by = "sample")  
+        split.by = "sample")
 # Run UMAP
-seurat_integrated <- RunUMAP(seurat_integrated, 
+seurat_integrated <- RunUMAP(seurat_integrated,
                              dims = 1:40,
                              reduction = "pca")
 
-# Plot UMAP                             
-DimPlot(seurat_integrated)    
+# Plot UMAP
+DimPlot(seurat_integrated)
 DimPlot(seurat_integrated,
-        split.by = "sample")  
+        split.by = "sample")
 
 # Explore heatmap of PCs
-DimHeatmap(seurat_integrated, 
-           dims = 1:9, 
-           cells = 500, 
+DimHeatmap(seurat_integrated,
+           dims = 1:9,
+           cells = 500,
            balanced = TRUE)
 # Printing out the most variable genes driving PCs
-print(x = seurat_integrated[["pca"]], 
-      dims = 1:10, 
+print(x = seurat_integrated[["pca"]],
+      dims = 1:10,
       nfeatures = 5)
 # Plot the elbow plot
-ElbowPlot(object = seurat_integrated, 
+ElbowPlot(object = seurat_integrated,
           ndims = 40)
 # Determine the K-nearest neighbor graph
-seurat_integrated <- FindNeighbors(object = seurat_integrated, 
+seurat_integrated <- FindNeighbors(object = seurat_integrated,
                                    dims = 1:40)
 
-# Determine the clusters for various resolutions                                
+# Determine the clusters for various resolutions
 seurat_integrated <- FindClusters(object = seurat_integrated,
                                   resolution = c(0.4, 0.6, 0.8, 1.0, 1.4))
 # Explore resolutions
-seurat_integrated@meta.data %>% 
+seurat_integrated@meta.data %>%
   View()
 # Assign identity of clusters
 Idents(object = seurat_integrated) <- "integrated_snn_res.0.8"
@@ -276,8 +280,8 @@ Idents(object = seurat_integrated) <- "integrated_snn_res.0.8"
 ## Calculation of UMAP
 ## DO NOT RUN (calculated in the last lesson)
 
-# seurat_integrated <- RunUMAP(seurat_integrated, 
-#                  reduction = "pca", 
+# seurat_integrated <- RunUMAP(seurat_integrated,
+#                  reduction = "pca",
 #                  dims = 1:40)
 
 # Plot the UMAP
@@ -297,7 +301,7 @@ DimPlot(seurat_integrated,
 
 
 # Extract identity and sample information from seurat object to determine the number of cells per cluster per sample
-n_cells <- FetchData(seurat_integrated, 
+n_cells <- FetchData(seurat_integrated,
                      vars = c("ident", "orig.ident")) %>%
   dplyr::count(ident, orig.ident) %>%
   tidyr::spread(ident, n)
@@ -305,20 +309,20 @@ n_cells <- FetchData(seurat_integrated,
 # View table
 View(n_cells)
 # UMAP of cells in each cluster by sample
-DimPlot(seurat_integrated, 
-        label = TRUE, 
+DimPlot(seurat_integrated,
+        label = TRUE,
         split.by = "sample")  + NoLegend()
 # Explore whether clusters segregate by cell cycle phase
 DimPlot(seurat_integrated,
-        label = TRUE, 
+        label = TRUE,
         split.by = "Phase")  + NoLegend()
 # Determine metrics to plot present in seurat_integrated@meta.data
 metrics <-  c("nUMI", "nGene", "S.Score", "G2M.Score", "mitoRatio")
 
-FeaturePlot(seurat_integrated, 
-            reduction = "umap", 
+FeaturePlot(seurat_integrated,
+            reduction = "umap",
             features = metrics,
-            pt.size = 0.4, 
+            pt.size = 0.4,
             sort.cell = TRUE,
             min.cutoff = 'q10',
             label = TRUE)
@@ -328,65 +332,65 @@ columns <- c(paste0("PC_", 1:16),
              "UMAP_1", "UMAP_2")
 
 # Extracting this data from the seurat object
-pc_data <- FetchData(seurat_integrated, 
+pc_data <- FetchData(seurat_integrated,
                      vars = columns)
 # Adding cluster label to center of cluster on UMAP
-umap_label <- FetchData(seurat_integrated, 
+umap_label <- FetchData(seurat_integrated,
                         vars = c("ident", "UMAP_1", "UMAP_2"))  %>%
   group_by(ident) %>%
   summarise(x=mean(UMAP_1), y=mean(UMAP_2))
 
 # Plotting a UMAP plot for each of the PCs
 map(paste0("PC_", 1:16), function(pc){
-  ggplot(pc_data, 
+  ggplot(pc_data,
          aes(UMAP_1, UMAP_2)) +
-    geom_point(aes_string(color=pc), 
+    geom_point(aes_string(color=pc),
                alpha = 0.7) +
-    scale_color_gradient(guide = FALSE, 
-                         low = "grey90", 
+    scale_color_gradient(guide = FALSE,
+                         low = "grey90",
                          high = "blue")  +
-    geom_text(data=umap_label, 
+    geom_text(data=umap_label,
               aes(label=ident, x, y)) +
     ggtitle(pc)
-}) %>% 
+}) %>%
   plot_grid(plotlist = .)
-# Examine PCA results 
+# Examine PCA results
 print(seurat_integrated[["pca"]], dims = 1:5, nfeatures = 5)
-DimPlot(object = seurat_integrated, 
-        reduction = "umap", 
+DimPlot(object = seurat_integrated,
+        reduction = "umap",
         label = TRUE) + NoLegend()
 # Select the RNA counts slot to be the default assay
 DefaultAssay(seurat_integrated) <- "RNA"
 
 # Normalize RNA data for visualization purposes
 seurat_integrated <- NormalizeData(seurat_integrated, verbose = FALSE)
-FeaturePlot(seurat_integrated, 
-            reduction = "umap", 
-            features = c("CD14", "LYZ"), 
+FeaturePlot(seurat_integrated,
+            reduction = "umap",
+            features = c("CD14", "LYZ"),
             sort.cell = TRUE,
-            min.cutoff = 'q10', 
+            min.cutoff = 'q10',
             label = TRUE)
-FeaturePlot(seurat_integrated, 
-            reduction = "umap", 
-            features = c("FCGR3A", "MS4A7"), 
+FeaturePlot(seurat_integrated,
+            reduction = "umap",
+            features = c("FCGR3A", "MS4A7"),
             sort.cell = TRUE,
-            min.cutoff = 'q10', 
+            min.cutoff = 'q10',
             label = TRUE)
-FeaturePlot(seurat_integrated, 
-            reduction = "umap", 
-            features = c("MARCO", "ITGAM", "ADGRE1"), 
+FeaturePlot(seurat_integrated,
+            reduction = "umap",
+            features = c("MARCO", "ITGAM", "ADGRE1"),
             sort.cell = TRUE,
-            min.cutoff = 'q10', 
+            min.cutoff = 'q10',
             label = TRUE)
-FeaturePlot(seurat_integrated, 
-            reduction = "umap", 
-            features = c("FCER1A", "CST3"), 
+FeaturePlot(seurat_integrated,
+            reduction = "umap",
+            features = c("FCER1A", "CST3"),
             sort.cell = TRUE,
-            min.cutoff = 'q10', 
+            min.cutoff = 'q10',
             label = TRUE)
-FeaturePlot(seurat_integrated, 
-            reduction = "umap", 
-            features = c("IL3RA", "GZMB", "SERPINF1", "ITM2C"), 
+FeaturePlot(seurat_integrated,
+            reduction = "umap",
+            features = c("IL3RA", "GZMB", "SERPINF1", "ITM2C"),
             sort.cell = TRUE,
-            min.cutoff = 'q10', 
+            min.cutoff = 'q10',
             label = TRUE)

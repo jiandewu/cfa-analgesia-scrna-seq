@@ -1,0 +1,17 @@
+name: cfa-analgesia-scrna-seq
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.4
+  - r-seurat
+  - r-matrix
+  - r-scales
+  - r-tidyverse
+  - r-cowplot
+  - r-rcurl
+  - r-future
+  - r-sctransform
+  - r-metap
+  - bioconductor-singlecellexperiment
+  - bioconductor-multtest
